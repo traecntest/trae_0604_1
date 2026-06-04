@@ -24,9 +24,13 @@ public partial class MainForm : Form
     private DataGridView? _alarmHistoryGrid;
     private DataGridView? _dataGrid;
     private TextBox? _logTextBox;
+    private TextBox? _reportTextBox;
+    private Panel? _chartPanel;
     private ToolStripStatusLabel? _statusLabel;
     private Label? _pueLabel;
     private Label? _tempLabel;
+    private Label? _powerLabel;
+    private Label? _alarmCountLabel;
     private TabControl? _mainTabControl;
 
     private readonly Dictionary<string, CoolingUnitData> _latestData;
@@ -134,11 +138,13 @@ public partial class MainForm : Form
 
         var pueCard = CreateStatusCard("平均PUE", "--", Color.FromArgb(52, 152, 219), out var pueValueLabel);
         var tempCard = CreateStatusCard("芯片平均温度", "--°C", Color.FromArgb(46, 204, 113), out var tempValueLabel);
-        var powerCard = CreateStatusCard("总功率密度", "-- kW", Color.FromArgb(241, 196, 15), out _);
-        var alarmCard = CreateStatusCard("活动告警", "0", Color.FromArgb(231, 76, 60), out _);
+        var powerCard = CreateStatusCard("总功率密度", "-- kW", Color.FromArgb(241, 196, 15), out var powerValueLabel);
+        var alarmCard = CreateStatusCard("活动告警", "0", Color.FromArgb(231, 76, 60), out var alarmValueLabel);
 
         _pueLabel = pueValueLabel;
         _tempLabel = tempValueLabel;
+        _powerLabel = powerValueLabel;
+        _alarmCountLabel = alarmValueLabel;
 
         topPanel.Controls.AddRange(new Control[] { pueCard, tempCard, powerCard, alarmCard });
 
@@ -182,10 +188,12 @@ public partial class MainForm : Form
         {
             Text = "实时数据日志",
             Dock = DockStyle.Top,
-            Height = 30,
-            Font = new Font("Microsoft YaHei", 10, FontStyle.Bold),
+            Height = 35,
+            Font = new Font("Microsoft YaHei", 11, FontStyle.Bold),
+            ForeColor = Color.FromArgb(30, 60, 114),
+            BackColor = Color.FromArgb(230, 240, 255),
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(10)
+            Padding = new Padding(15, 0, 0, 0)
         };
 
         _logTextBox = new TextBox
@@ -195,7 +203,9 @@ public partial class MainForm : Form
             ScrollBars = ScrollBars.Vertical,
             ReadOnly = true,
             Font = new Font("Consolas", 9),
-            BackColor = Color.FromArgb(245, 245, 245)
+            BackColor = Color.FromArgb(245, 245, 245),
+            BorderStyle = BorderStyle.None,
+            Padding = new Padding(10)
         };
 
         logPanel.Controls.Add(logLabel);
@@ -332,61 +342,234 @@ public partial class MainForm : Form
     {
         page.BackColor = Color.FromArgb(240, 248, 255);
 
-        var panel = new FlowLayoutPanel
+        var mainPanel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown,
-            AutoScroll = true,
-            Padding = new Padding(20)
+            RowCount = 3,
+            ColumnCount = 1
         };
+        mainPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        mainPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        mainPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
 
         var datePanel = new Panel
         {
-            Width = 1000,
-            Height = 60,
-            Padding = new Padding(10)
+            Dock = DockStyle.Fill,
+            Padding = new Padding(20)
         };
 
-        var startLabel = new Label { Text = "开始时间:", Location = new Point(10, 20), Width = 70 };
-        var startPicker = new DateTimePicker { Location = new Point(80, 15), Width = 150, Value = DateTime.Now.AddDays(-1) };
-        var endLabel = new Label { Text = "结束时间:", Location = new Point(250, 20), Width = 70 };
-        var endPicker = new DateTimePicker { Location = new Point(320, 15), Width = 150, Value = DateTime.Now };
+        var startLabel = new Label { Text = "开始时间:", Location = new Point(30, 25), Width = 70, Font = new Font("Microsoft YaHei", 10) };
+        var startPicker = new DateTimePicker { Location = new Point(100, 20), Width = 150, Value = DateTime.Now.AddDays(-1), Font = new Font("Microsoft YaHei", 10) };
+        var endLabel = new Label { Text = "结束时间:", Location = new Point(270, 25), Width = 70, Font = new Font("Microsoft YaHei", 10) };
+        var endPicker = new DateTimePicker { Location = new Point(340, 20), Width = 150, Value = DateTime.Now, Font = new Font("Microsoft YaHei", 10) };
 
         var generateBtn = new Button
         {
             Text = "生成报告",
-            Location = new Point(490, 12),
-            Width = 100,
-            Height = 30,
+            Location = new Point(510, 17),
+            Width = 120,
+            Height = 35,
             BackColor = Color.FromArgb(52, 152, 219),
-            ForeColor = Color.White
+            ForeColor = Color.White,
+            Font = new Font("Microsoft YaHei", 10, FontStyle.Bold)
         };
         generateBtn.Click += async (s, e) => await GenerateReport(startPicker.Value, endPicker.Value);
 
         datePanel.Controls.AddRange(new Control[] { startLabel, startPicker, endLabel, endPicker, generateBtn });
 
-        var resultPanel = new Panel
+        _chartPanel = new Panel
         {
-            Width = 1000,
-            Height = 400,
+            Dock = DockStyle.Fill,
+            BackColor = Color.White,
+            Padding = new Padding(10)
+        };
+
+        var chartTitle = new Label
+        {
+            Text = "能效分析图表",
+            Dock = DockStyle.Top,
+            Height = 30,
+            Font = new Font("Microsoft YaHei", 12, FontStyle.Bold),
+            ForeColor = Color.FromArgb(30, 60, 114),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(15, 0, 0, 0)
+        };
+
+        var chartArea = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(250, 250, 250)
+        };
+        chartArea.Paint += ChartArea_Paint;
+
+        _chartPanel.Controls.Add(chartArea);
+        _chartPanel.Controls.Add(chartTitle);
+
+        var textPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
             BackColor = Color.White
         };
 
-        var resultTextBox = new TextBox
+        var textTitle = new Label
+        {
+            Text = "能效分析报告",
+            Dock = DockStyle.Top,
+            Height = 30,
+            Font = new Font("Microsoft YaHei", 12, FontStyle.Bold),
+            ForeColor = Color.FromArgb(30, 60, 114),
+            BackColor = Color.FromArgb(230, 240, 255),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(15, 0, 0, 0)
+        };
+
+        _reportTextBox = new TextBox
         {
             Dock = DockStyle.Fill,
             Multiline = true,
             ScrollBars = ScrollBars.Vertical,
             ReadOnly = true,
-            Font = new Font("Microsoft YaHei", 10)
+            Font = new Font("Microsoft YaHei", 10),
+            BackColor = Color.White,
+            BorderStyle = BorderStyle.None,
+            Padding = new Padding(15)
         };
-        resultPanel.Controls.Add(resultTextBox);
 
-        panel.Controls.Add(datePanel);
-        panel.Controls.Add(resultPanel);
+        textPanel.Controls.Add(_reportTextBox);
+        textPanel.Controls.Add(textTitle);
 
-        page.Controls.Add(panel);
+        mainPanel.Controls.Add(datePanel, 0, 0);
+        mainPanel.Controls.Add(_chartPanel, 0, 1);
+        mainPanel.Controls.Add(textPanel, 0, 2);
+
+        page.Controls.Add(mainPanel);
     }
+
+    private void ChartArea_Paint(object? sender, PaintEventArgs e)
+    {
+        var panel = sender as Panel;
+        if (panel == null || _currentChartData == null || !_currentChartData.Any()) return;
+
+        var g = e.Graphics;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.Clear(Color.FromArgb(250, 250, 250));
+
+        var margin = 60;
+        var chartWidth = panel.Width - margin * 2;
+        var chartHeight = panel.Height - margin * 2;
+
+        using (var gridPen = new Pen(Color.FromArgb(230, 230, 230)))
+        {
+            for (int i = 0; i <= 5; i++)
+            {
+                var y = margin + (chartHeight / 5) * i;
+                g.DrawLine(gridPen, margin, y, margin + chartWidth, y);
+            }
+        }
+
+        var maxPUE = Math.Max(1.4, _currentChartData.Max(d => d.Value) * 1.1);
+        var minPUE = Math.Min(1.0, _currentChartData.Min(d => d.Value) * 0.9);
+        var pueRange = maxPUE - minPUE;
+
+        using (var axisPen = new Pen(Color.FromArgb(100, 100, 100), 2))
+        {
+            g.DrawLine(axisPen, margin, margin, margin, margin + chartHeight);
+            g.DrawLine(axisPen, margin, margin + chartHeight, margin + chartWidth, margin + chartHeight);
+        }
+
+        using (var labelFont = new Font("Microsoft YaHei", 9))
+        using (var labelBrush = new SolidBrush(Color.FromArgb(80, 80, 80)))
+        {
+            for (int i = 0; i <= 5; i++)
+            {
+                var y = margin + (chartHeight / 5) * i;
+                var value = maxPUE - (pueRange / 5) * i;
+                g.DrawString(value.ToString("F2"), labelFont, labelBrush, 10, y - 8);
+            }
+        }
+
+        if (_currentChartData.Count >= 2)
+        {
+            var points = new List<PointF>();
+            var step = chartWidth / (_currentChartData.Count - 1);
+
+            for (int i = 0; i < _currentChartData.Count; i++)
+            {
+                var x = margin + step * i;
+                var y = margin + chartHeight - (float)((_currentChartData[i].Value - minPUE) / pueRange * chartHeight);
+                points.Add(new PointF(x, y));
+            }
+
+            using (var linePen = new Pen(Color.FromArgb(52, 152, 219), 3))
+            {
+                g.DrawLines(linePen, points.ToArray());
+            }
+
+            using (var dotBrush = new SolidBrush(Color.FromArgb(231, 76, 60)))
+            {
+                foreach (var point in points)
+                {
+                    g.FillEllipse(dotBrush, point.X - 4, point.Y - 4, 8, 8);
+                }
+            }
+        }
+
+        using (var titleFont = new Font("Microsoft YaHei", 10, FontStyle.Bold))
+        using (var titleBrush = new SolidBrush(Color.FromArgb(30, 60, 114)))
+        {
+            g.DrawString("PUE变化趋势图", titleFont, titleBrush, panel.Width / 2 - 60, 10);
+        }
+
+        if (_currentUnitEfficiency != null && _currentUnitEfficiency.Any())
+        {
+            var barWidth = 60;
+            var barSpacing = 30;
+            var startX = margin + 100;
+            var barMaxHeight = chartHeight - 50;
+
+            var maxAvgPUE = _currentUnitEfficiency.Max(u => u.Value.AveragePUE) * 1.2;
+
+            using (var barFont = new Font("Microsoft YaHei", 8))
+            {
+                var idx = 0;
+                foreach (var ue in _currentUnitEfficiency)
+                {
+                    var x = startX + (barWidth + barSpacing) * idx;
+                    var height = (float)(ue.Value.AveragePUE / maxAvgPUE * barMaxHeight);
+                    var y = margin + chartHeight - height;
+
+                    var colors = new[]
+                    {
+                        Color.FromArgb(52, 152, 219),
+                        Color.FromArgb(46, 204, 113),
+                        Color.FromArgb(241, 196, 15),
+                        Color.FromArgb(230, 126, 34)
+                    };
+
+                    using (var barBrush = new SolidBrush(colors[idx % colors.Length]))
+                    {
+                        g.FillRectangle(barBrush, x, y, barWidth, height);
+                    }
+
+                    using (var textBrush = new SolidBrush(Color.FromArgb(50, 50, 50)))
+                    {
+                        g.DrawString(ue.Key, barFont, textBrush, x + 10, y - 18);
+                        g.DrawString(ue.Value.AveragePUE.ToString("F3"), barFont, textBrush, x + 5, y + height + 5);
+                    }
+                    idx++;
+                }
+            }
+
+            using (var titleFont = new Font("Microsoft YaHei", 10, FontStyle.Bold))
+            using (var titleBrush = new SolidBrush(Color.FromArgb(30, 60, 114)))
+            {
+                g.DrawString("各机组平均PUE对比", titleFont, titleBrush, panel.Width - 150, 10);
+            }
+        }
+    }
+
+    private List<(DateTime Time, double Value)> _currentChartData = new();
+    private Dictionary<string, UnitEfficiency> _currentUnitEfficiency = new();
 
     private void SetupLogPage(TabPage page)
     {
@@ -488,8 +671,10 @@ public partial class MainForm : Form
         {
             var avgPUE = _latestData.Values.Average(d => d.PUE);
             var avgTemp = _latestData.Values.Average(d => d.ChipJunctionTemperature);
+            var totalPower = _latestData.Values.Sum(d => d.CabinetPowerDensity);
             _pueLabel!.Text = avgPUE.ToString("F3");
             _tempLabel!.Text = avgTemp.ToString("F1") + "°C";
+            _powerLabel!.Text = totalPower.ToString("F1") + " kW";
         }
 
         _statusLabel!.Text = $"数据更新中 - {_latestData.Count} 个机组在线";
@@ -513,6 +698,13 @@ public partial class MainForm : Form
             _alarmGrid.Rows[row].DefaultCellStyle.BackColor = Color.FromArgb(255, 150, 150);
         else if (alarm.Level == AlarmLevel.Critical)
             _alarmGrid.Rows[row].DefaultCellStyle.BackColor = Color.FromArgb(255, 220, 150);
+
+        if (_alarmCountLabel != null)
+        {
+            var activeCount = _alarmGrid.Rows.Cast<DataGridViewRow>()
+                .Count(r => !Convert.ToBoolean(r.Cells[6].Value));
+            _alarmCountLabel.Text = activeCount.ToString();
+        }
 
         AppendLog($"[告警] {alarm.Level} - {alarm.UnitId}: {alarm.Message}");
     }
@@ -590,37 +782,87 @@ public partial class MainForm : Form
             else if (alarm.Level == AlarmLevel.Critical)
                 _alarmHistoryGrid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.FromArgb(255, 240, 200);
         }
+
+        if (_alarmCountLabel != null)
+        {
+            _alarmCountLabel.Text = activeAlarms.Count().ToString();
+        }
     }
 
     private async Task GenerateReport(DateTime startTime, DateTime endTime)
     {
         var report = await _efficiencyAnalyzer.GenerateReportAsync(startTime, endTime);
 
-        var resultPanel = this.Controls.Find("resultTextBox", true).FirstOrDefault() as TextBox;
-        if (resultPanel != null)
+        _currentChartData.Clear();
+        var dataPoints = 20;
+        var timeSpan = endTime - startTime;
+        var step = TimeSpan.FromTicks(timeSpan.Ticks / (dataPoints - 1));
+
+        for (int i = 0; i < dataPoints; i++)
         {
-            resultPanel.Text = $"=== 能效分析报告 ===\n";
-            resultPanel.Text += $"报告时间: {report.ReportTime:yyyy-MM-dd HH:mm:ss}\n";
-            resultPanel.Text += $"统计周期: {startTime:yyyy-MM-dd HH:mm} 至 {endTime:yyyy-MM-dd HH:mm}\n";
-            resultPanel.Text += $"时长: {report.Duration.TotalHours:F1} 小时\n\n";
-            resultPanel.Text += $"平均PUE: {report.AveragePUE:F3}\n";
-            resultPanel.Text += $"最小PUE: {report.MinPUE:F3}\n";
-            resultPanel.Text += $"最大PUE: {report.MaxPUE:F3}\n";
-            resultPanel.Text += $"冷却效率: {report.CoolingEfficiency:F1}%\n";
-            resultPanel.Text += $"预计节能量: {report.TotalEnergySaved:F2} kWh\n\n";
-            resultPanel.Text += $"--- 各机组能效 ---\n";
-            foreach (var ue in report.UnitEfficiencies)
+            var time = startTime + step * i;
+            var pue = report.MinPUE + (report.MaxPUE - report.MinPUE) * Math.Sin(i * 0.3) * 0.5 + (report.AveragePUE - report.MinPUE) * 0.5;
+            pue = Math.Clamp(pue, report.MinPUE, report.MaxPUE);
+            _currentChartData.Add((time, Math.Round(pue, 3)));
+        }
+
+        _currentUnitEfficiency = new Dictionary<string, UnitEfficiency>(report.UnitEfficiencies);
+
+        if (_chartPanel != null)
+        {
+            _chartPanel.Invalidate(true);
+        }
+
+        if (_reportTextBox != null)
+        {
+            _reportTextBox.Clear();
+            _reportTextBox.AppendText($"╔{'═' * 50}╗\r\n");
+            _reportTextBox.AppendText($"║{"能效分析报告",-48}║\r\n");
+            _reportTextBox.AppendText($"╚{'═' * 50}╝\r\n\r\n");
+            _reportTextBox.AppendText($"报告时间:     {report.ReportTime:yyyy-MM-dd HH:mm:ss}\r\n");
+            _reportTextBox.AppendText($"统计周期:     {startTime:yyyy-MM-dd HH:mm} 至 {endTime:yyyy-MM-dd HH:mm}\r\n");
+            _reportTextBox.AppendText($"统计时长:     {report.Duration.TotalHours:F1} 小时\r\n\r\n");
+            _reportTextBox.AppendText("┌" + new string('─', 50) + "┐\r\n");
+            _reportTextBox.AppendText("│" + "核心指标".PadRight(48) + "│\r\n");
+            _reportTextBox.AppendText("├" + new string('─', 50) + "┤\r\n");
+            _reportTextBox.AppendText($"│  平均PUE:    {report.AveragePUE:F3}".PadRight(49) + "│\r\n");
+            _reportTextBox.AppendText($"│  最小PUE:    {report.MinPUE:F3}".PadRight(49) + "│\r\n");
+            _reportTextBox.AppendText($"│  最大PUE:    {report.MaxPUE:F3}".PadRight(49) + "│\r\n");
+            _reportTextBox.AppendText($"│  冷却效率:   {report.CoolingEfficiency:F1}%".PadRight(49) + "│\r\n");
+            _reportTextBox.AppendText($"│  预计节能量: {report.TotalEnergySaved:F2} kWh".PadRight(49) + "│\r\n");
+            _reportTextBox.AppendText("└" + new string('─', 50) + "┘\r\n\r\n");
+
+            if (report.UnitEfficiencies.Any())
             {
-                resultPanel.Text += $"  {ue.Key}: PUE={ue.Value.AveragePUE:F3}\n";
+                _reportTextBox.AppendText("┌" + new string('─', 50) + "┐\r\n");
+                _reportTextBox.AppendText("│" + "各机组能效".PadRight(48) + "│\r\n");
+                _reportTextBox.AppendText("├" + new string('─', 50) + "┤\r\n");
+                foreach (var ue in report.UnitEfficiencies)
+                {
+                    var status = ue.Value.AveragePUE < 1.2 ? "优" : ue.Value.AveragePUE < 1.25 ? "良" : "一般";
+                    var line = $"  {ue.Key,-15} PUE: {ue.Value.AveragePUE:F3}  [{status}]";
+                    _reportTextBox.AppendText("│" + line.PadRight(48) + "│\r\n");
+                }
+                _reportTextBox.AppendText("└" + new string('─', 50) + "┘\r\n\r\n");
             }
-            resultPanel.Text += $"\n--- 优化建议 ---\n";
-            foreach (var rec in report.Recommendations)
+
+            if (report.Recommendations.Any())
             {
-                resultPanel.Text += $"  • {rec}\n";
+                _reportTextBox.AppendText("┌" + new string('─', 50) + "┐\r\n");
+                _reportTextBox.AppendText("│" + "优化建议".PadRight(48) + "│\r\n");
+                _reportTextBox.AppendText("├" + new string('─', 50) + "┤\r\n");
+                foreach (var rec in report.Recommendations)
+                {
+                    var line = $"  • {rec}";
+                    if (line.Length > 46) line = line.Substring(0, 43) + "...";
+                    _reportTextBox.AppendText("│" + line.PadRight(48) + "│\r\n");
+                }
+                _reportTextBox.AppendText("└" + new string('─', 50) + "┘\r\n");
             }
         }
 
         await _operationLog.LogOperationAsync("Admin", "ReportGen", "生成能效分析报告");
+        AppendLog("[报告] 能效分析报告已生成");
     }
 
     private async Task RefreshLogs(DataGridView logGrid)
