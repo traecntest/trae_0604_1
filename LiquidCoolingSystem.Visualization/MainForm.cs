@@ -380,30 +380,78 @@ public partial class MainForm : Form
         _chartPanel = new Panel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.White,
-            Padding = new Padding(10)
+            BackColor = Color.White
         };
 
-        var chartTitle = new Label
+        var chartLayout = new TableLayoutPanel
         {
-            Text = "能效分析图表",
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1
+        };
+        chartLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
+        chartLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
+
+        var trendPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(250, 250, 250),
+            Padding = new Padding(5)
+        };
+
+        var trendTitle = new Label
+        {
+            Text = "PUE变化趋势图（横轴：时间）",
             Dock = DockStyle.Top,
-            Height = 30,
-            Font = new Font("Microsoft YaHei", 12, FontStyle.Bold),
+            Height = 25,
+            Font = new Font("Microsoft YaHei", 10, FontStyle.Bold),
             ForeColor = Color.FromArgb(30, 60, 114),
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(15, 0, 0, 0)
+            Padding = new Padding(10, 0, 0, 0)
         };
 
-        var chartArea = new Panel
+        var trendChartArea = new Panel
         {
             Dock = DockStyle.Fill,
             BackColor = Color.FromArgb(250, 250, 250)
         };
-        chartArea.Paint += ChartArea_Paint;
+        trendChartArea.Paint += TrendChart_Paint;
 
-        _chartPanel.Controls.Add(chartArea);
-        _chartPanel.Controls.Add(chartTitle);
+        trendPanel.Controls.Add(trendChartArea);
+        trendPanel.Controls.Add(trendTitle);
+
+        var comparePanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(250, 250, 250),
+            Padding = new Padding(5)
+        };
+
+        var compareTitle = new Label
+        {
+            Text = "各机组PUE对比图（横轴：机组）",
+            Dock = DockStyle.Top,
+            Height = 25,
+            Font = new Font("Microsoft YaHei", 10, FontStyle.Bold),
+            ForeColor = Color.FromArgb(30, 60, 114),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(10, 0, 0, 0)
+        };
+
+        var compareChartArea = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(250, 250, 250)
+        };
+        compareChartArea.Paint += CompareChart_Paint;
+
+        comparePanel.Controls.Add(compareChartArea);
+        comparePanel.Controls.Add(compareTitle);
+
+        chartLayout.Controls.Add(trendPanel, 0, 0);
+        chartLayout.Controls.Add(comparePanel, 1, 0);
+
+        _chartPanel.Controls.Add(chartLayout);
 
         var textPanel = new Panel
         {
@@ -445,10 +493,14 @@ public partial class MainForm : Form
         page.Controls.Add(mainPanel);
     }
 
-    private void ChartArea_Paint(object? sender, PaintEventArgs e)
+    private void TrendChart_Paint(object? sender, PaintEventArgs e)
     {
         var panel = sender as Panel;
-        if (panel == null || _currentChartData == null || !_currentChartData.Any()) return;
+        if (panel == null || _currentChartData == null || !_currentChartData.Any())
+        {
+            DrawEmptyChart(e.Graphics, panel, "暂无数据");
+            return;
+        }
 
         var g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -456,7 +508,9 @@ public partial class MainForm : Form
 
         var margin = 60;
         var chartWidth = panel.Width - margin * 2;
-        var chartHeight = panel.Height - margin * 2;
+        var chartHeight = panel.Height - margin * 2 - 20;
+
+        if (chartWidth <= 0 || chartHeight <= 0) return;
 
         using (var gridPen = new Pen(Color.FromArgb(230, 230, 230)))
         {
@@ -470,6 +524,7 @@ public partial class MainForm : Form
         var maxPUE = Math.Max(1.4, _currentChartData.Max(d => d.Value) * 1.1);
         var minPUE = Math.Min(1.0, _currentChartData.Min(d => d.Value) * 0.9);
         var pueRange = maxPUE - minPUE;
+        if (pueRange <= 0) pueRange = 0.5;
 
         using (var axisPen = new Pen(Color.FromArgb(100, 100, 100), 2))
         {
@@ -486,21 +541,34 @@ public partial class MainForm : Form
                 var value = maxPUE - (pueRange / 5) * i;
                 g.DrawString(value.ToString("F2"), labelFont, labelBrush, 10, y - 8);
             }
+
+            g.DrawString("PUE", labelFont, labelBrush, 5, margin - 20);
+
+            if (_currentChartData.Count >= 2)
+            {
+                var step = Math.Max(1, _currentChartData.Count / 4);
+                for (int i = 0; i < _currentChartData.Count; i += step)
+                {
+                    var x = margin + (chartWidth / (_currentChartData.Count - 1)) * i;
+                    var label = _currentChartData[i].Time.ToString("HH:mm");
+                    g.DrawString(label, labelFont, labelBrush, x - 15, margin + chartHeight + 5);
+                }
+            }
         }
 
         if (_currentChartData.Count >= 2)
         {
             var points = new List<PointF>();
-            var step = chartWidth / (_currentChartData.Count - 1);
+            var stepX = chartWidth / (_currentChartData.Count - 1);
 
             for (int i = 0; i < _currentChartData.Count; i++)
             {
-                var x = margin + step * i;
+                var x = margin + stepX * i;
                 var y = margin + chartHeight - (float)((_currentChartData[i].Value - minPUE) / pueRange * chartHeight);
                 points.Add(new PointF(x, y));
             }
 
-            using (var linePen = new Pen(Color.FromArgb(52, 152, 219), 3))
+            using (var linePen = new Pen(Color.FromArgb(52, 152, 219), 2.5f))
             {
                 g.DrawLines(linePen, points.ToArray());
             }
@@ -509,63 +577,119 @@ public partial class MainForm : Form
             {
                 foreach (var point in points)
                 {
-                    g.FillEllipse(dotBrush, point.X - 4, point.Y - 4, 8, 8);
+                    g.FillEllipse(dotBrush, point.X - 3, point.Y - 3, 6, 6);
                 }
             }
         }
-
-        using (var titleFont = new Font("Microsoft YaHei", 10, FontStyle.Bold))
-        using (var titleBrush = new SolidBrush(Color.FromArgb(30, 60, 114)))
+        else if (_currentChartData.Count == 1)
         {
-            g.DrawString("PUE变化趋势图", titleFont, titleBrush, panel.Width / 2 - 60, 10);
+            var x = margin + chartWidth / 2;
+            var y = margin + chartHeight - (float)((_currentChartData[0].Value - minPUE) / pueRange * chartHeight);
+            using (var dotBrush = new SolidBrush(Color.FromArgb(231, 76, 60)))
+            {
+                g.FillEllipse(dotBrush, x - 4, y - 4, 8, 8);
+            }
+        }
+    }
+
+    private void CompareChart_Paint(object? sender, PaintEventArgs e)
+    {
+        var panel = sender as Panel;
+        if (panel == null || _currentUnitEfficiency == null || !_currentUnitEfficiency.Any())
+        {
+            DrawEmptyChart(e.Graphics, panel, "暂无数据");
+            return;
         }
 
-        if (_currentUnitEfficiency != null && _currentUnitEfficiency.Any())
+        var g = e.Graphics;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.Clear(Color.FromArgb(250, 250, 250));
+
+        var marginLeft = 60;
+        var marginRight = 30;
+        var marginTop = 20;
+        var marginBottom = 60;
+        var chartWidth = panel.Width - marginLeft - marginRight;
+        var chartHeight = panel.Height - marginTop - marginBottom;
+
+        if (chartWidth <= 0 || chartHeight <= 0) return;
+
+        var unitList = _currentUnitEfficiency.OrderBy(u => u.Key).ToList();
+        var barCount = unitList.Count;
+        var barSpacing = 20;
+        var totalBarWidth = chartWidth - (barSpacing * (barCount + 1));
+        var barWidth = Math.Max(40, totalBarWidth / barCount);
+
+        var maxAvgPUE = Math.Max(1.3, unitList.Max(u => u.Value.AveragePUE) * 1.2);
+        var minAvgPUE = Math.Min(1.0, unitList.Min(u => u.Value.AveragePUE) * 0.9);
+        var pueRange = maxAvgPUE - minAvgPUE;
+        if (pueRange <= 0) pueRange = 0.5;
+
+        using (var gridPen = new Pen(Color.FromArgb(230, 230, 230)))
         {
-            var barWidth = 60;
-            var barSpacing = 30;
-            var startX = margin + 100;
-            var barMaxHeight = chartHeight - 50;
-
-            var maxAvgPUE = _currentUnitEfficiency.Max(u => u.Value.AveragePUE) * 1.2;
-
-            using (var barFont = new Font("Microsoft YaHei", 8))
+            for (int i = 0; i <= 4; i++)
             {
-                var idx = 0;
-                foreach (var ue in _currentUnitEfficiency)
+                var y = marginTop + (chartHeight / 4) * i;
+                g.DrawLine(gridPen, marginLeft, y, marginLeft + chartWidth, y);
+            }
+        }
+
+        using (var axisPen = new Pen(Color.FromArgb(100, 100, 100), 2))
+        {
+            g.DrawLine(axisPen, marginLeft, marginTop, marginLeft, marginTop + chartHeight);
+            g.DrawLine(axisPen, marginLeft, marginTop + chartHeight, marginLeft + chartWidth, marginTop + chartHeight);
+        }
+
+        using (var labelFont = new Font("Microsoft YaHei", 9))
+        using (var labelBrush = new SolidBrush(Color.FromArgb(80, 80, 80)))
+        {
+            for (int i = 0; i <= 4; i++)
+            {
+                var y = marginTop + (chartHeight / 4) * i;
+                var value = maxAvgPUE - (pueRange / 4) * i;
+                g.DrawString(value.ToString("F2"), labelFont, labelBrush, 10, y - 8);
+            }
+            g.DrawString("PUE", labelFont, labelBrush, 5, marginTop - 10);
+        }
+
+        var colors = new[]
+        {
+            Color.FromArgb(52, 152, 219),
+            Color.FromArgb(46, 204, 113),
+            Color.FromArgb(241, 196, 15),
+            Color.FromArgb(230, 126, 34)
+        };
+
+        using (var barFont = new Font("Microsoft YaHei", 9))
+        using (var textBrush = new SolidBrush(Color.FromArgb(50, 50, 50)))
+        {
+            for (int i = 0; i < unitList.Count; i++)
+            {
+                var ue = unitList[i];
+                var x = marginLeft + barSpacing + (barWidth + barSpacing) * i;
+                var height = (float)((ue.Value.AveragePUE - minAvgPUE) / pueRange * chartHeight);
+                var y = marginTop + chartHeight - height;
+
+                using (var barBrush = new SolidBrush(colors[i % colors.Length]))
                 {
-                    var x = startX + (barWidth + barSpacing) * idx;
-                    var height = (float)(ue.Value.AveragePUE / maxAvgPUE * barMaxHeight);
-                    var y = margin + chartHeight - height;
-
-                    var colors = new[]
-                    {
-                        Color.FromArgb(52, 152, 219),
-                        Color.FromArgb(46, 204, 113),
-                        Color.FromArgb(241, 196, 15),
-                        Color.FromArgb(230, 126, 34)
-                    };
-
-                    using (var barBrush = new SolidBrush(colors[idx % colors.Length]))
-                    {
-                        g.FillRectangle(barBrush, x, y, barWidth, height);
-                    }
-
-                    using (var textBrush = new SolidBrush(Color.FromArgb(50, 50, 50)))
-                    {
-                        g.DrawString(ue.Key, barFont, textBrush, x + 10, y - 18);
-                        g.DrawString(ue.Value.AveragePUE.ToString("F3"), barFont, textBrush, x + 5, y + height + 5);
-                    }
-                    idx++;
+                    g.FillRectangle(barBrush, x, y, barWidth, height);
                 }
-            }
 
-            using (var titleFont = new Font("Microsoft YaHei", 10, FontStyle.Bold))
-            using (var titleBrush = new SolidBrush(Color.FromArgb(30, 60, 114)))
-            {
-                g.DrawString("各机组平均PUE对比", titleFont, titleBrush, panel.Width - 150, 10);
+                var labelX = x + barWidth / 2 - 25;
+                g.DrawString(ue.Key, barFont, textBrush, labelX, marginTop + chartHeight + 5);
+                g.DrawString(ue.Value.AveragePUE.ToString("F3"), barFont, textBrush, labelX, y - 18);
             }
         }
+    }
+
+    private void DrawEmptyChart(Graphics g, Panel? panel, string message)
+    {
+        if (panel == null) return;
+        g.Clear(Color.FromArgb(250, 250, 250));
+        using var font = new Font("Microsoft YaHei", 12);
+        using var brush = new SolidBrush(Color.FromArgb(150, 150, 150));
+        var textSize = g.MeasureString(message, font);
+        g.DrawString(message, font, brush, (panel.Width - textSize.Width) / 2, (panel.Height - textSize.Height) / 2);
     }
 
     private List<(DateTime Time, double Value)> _currentChartData = new();
