@@ -21,7 +21,9 @@ public partial class MainForm : Form
     private DigitalTwinControl? _digitalTwinControl;
     private HeatMapControl? _heatMapControl;
     private DataGridView? _alarmGrid;
+    private DataGridView? _alarmHistoryGrid;
     private DataGridView? _dataGrid;
+    private TextBox? _logTextBox;
     private ToolStripStatusLabel? _statusLabel;
     private Label? _pueLabel;
     private Label? _tempLabel;
@@ -130,13 +132,13 @@ public partial class MainForm : Form
             Padding = new Padding(10)
         };
 
-        var pueCard = CreateStatusCard("平均PUE", "--", Color.FromArgb(52, 152, 219));
-        var tempCard = CreateStatusCard("芯片平均温度", "--°C", Color.FromArgb(46, 204, 113));
-        var powerCard = CreateStatusCard("总功率密度", "-- kW", Color.FromArgb(241, 196, 15));
-        var alarmCard = CreateStatusCard("活动告警", "0", Color.FromArgb(231, 76, 60));
+        var pueCard = CreateStatusCard("平均PUE", "--", Color.FromArgb(52, 152, 219), out var pueValueLabel);
+        var tempCard = CreateStatusCard("芯片平均温度", "--°C", Color.FromArgb(46, 204, 113), out var tempValueLabel);
+        var powerCard = CreateStatusCard("总功率密度", "-- kW", Color.FromArgb(241, 196, 15), out _);
+        var alarmCard = CreateStatusCard("活动告警", "0", Color.FromArgb(231, 76, 60), out _);
 
-        _pueLabel = pueCard.Controls[1] as Label;
-        _tempLabel = tempCard.Controls[1] as Label;
+        _pueLabel = pueValueLabel;
+        _tempLabel = tempValueLabel;
 
         topPanel.Controls.AddRange(new Control[] { pueCard, tempCard, powerCard, alarmCard });
 
@@ -186,7 +188,7 @@ public partial class MainForm : Form
             Padding = new Padding(10)
         };
 
-        var logTextBox = new TextBox
+        _logTextBox = new TextBox
         {
             Dock = DockStyle.Fill,
             Multiline = true,
@@ -196,8 +198,8 @@ public partial class MainForm : Form
             BackColor = Color.FromArgb(245, 245, 245)
         };
 
-        logPanel.Controls.Add(logTextBox);
         logPanel.Controls.Add(logLabel);
+        logPanel.Controls.Add(_logTextBox);
 
         splitContainer.Panel1.Controls.Add(_dataGrid);
         splitContainer.Panel2.Controls.Add(logPanel);
@@ -206,7 +208,7 @@ public partial class MainForm : Form
         page.Controls.Add(topPanel);
     }
 
-    private Panel CreateStatusCard(string title, string value, Color color)
+    private Panel CreateStatusCard(string title, string value, Color color, out Label valueLabelRef)
     {
         var card = new Panel
         {
@@ -234,6 +236,8 @@ public partial class MainForm : Form
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleCenter
         };
+
+        valueLabelRef = valueLabel;
 
         card.Controls.Add(valueLabel);
         card.Controls.Add(titleLabel);
@@ -288,7 +292,7 @@ public partial class MainForm : Form
             new DataGridViewCheckBoxColumn { Name = "Ack", HeaderText = "已确认", Width = 60 }
         });
 
-        var historyGrid = new DataGridView
+        _alarmHistoryGrid = new DataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
@@ -297,7 +301,7 @@ public partial class MainForm : Form
             BackgroundColor = Color.White
         };
 
-        historyGrid.Columns.AddRange(new DataGridViewColumn[]
+        _alarmHistoryGrid.Columns.AddRange(new DataGridViewColumn[]
         {
             new DataGridViewTextBoxColumn { Name = "Time", HeaderText = "时间", Width = 150 },
             new DataGridViewTextBoxColumn { Name = "UnitId", HeaderText = "机组", Width = 80 },
@@ -319,7 +323,7 @@ public partial class MainForm : Form
         panel1.Controls.Add(ackBtn);
 
         panel.Controls.Add(panel1, 0, 0);
-        panel.Controls.Add(historyGrid, 0, 1);
+        panel.Controls.Add(_alarmHistoryGrid, 0, 1);
 
         page.Controls.Add(panel);
     }
@@ -482,8 +486,10 @@ public partial class MainForm : Form
 
         if (_latestData.Any())
         {
-            _pueLabel!.Text = _latestData.Values.Average(d => d.PUE).ToString("F3");
-            _tempLabel!.Text = _latestData.Values.Average(d => d.ChipJunctionTemperature).ToString("F1") + "°C";
+            var avgPUE = _latestData.Values.Average(d => d.PUE);
+            var avgTemp = _latestData.Values.Average(d => d.ChipJunctionTemperature);
+            _pueLabel!.Text = avgPUE.ToString("F3");
+            _tempLabel!.Text = avgTemp.ToString("F1") + "°C";
         }
 
         _statusLabel!.Text = $"数据更新中 - {_latestData.Count} 个机组在线";
@@ -507,18 +513,33 @@ public partial class MainForm : Form
             _alarmGrid.Rows[row].DefaultCellStyle.BackColor = Color.FromArgb(255, 150, 150);
         else if (alarm.Level == AlarmLevel.Critical)
             _alarmGrid.Rows[row].DefaultCellStyle.BackColor = Color.FromArgb(255, 220, 150);
+
+        AppendLog($"[告警] {alarm.Level} - {alarm.UnitId}: {alarm.Message}");
+    }
+
+    private void AppendLog(string message)
+    {
+        if (_logTextBox == null) return;
+        var logEntry = $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}";
+        _logTextBox.AppendText(logEntry);
+        if (_logTextBox.Lines.Length > 500)
+        {
+            _logTextBox.Text = string.Join(Environment.NewLine, 
+                _logTextBox.Lines.Skip(_logTextBox.Lines.Length - 300));
+        }
     }
 
     private async Task AcknowledgeSelectedAlarms()
     {
-        if (_alarmGrid == null) return;
+        if (_alarmGrid == null || _alarmHistoryGrid == null) return;
 
+        var selectedAlarms = new List<AlarmRecord>();
         foreach (DataGridViewRow row in _alarmGrid.SelectedRows)
         {
             if (row.Cells[0].Value != null)
             {
                 var timeStr = row.Cells[0].Value.ToString();
-                var unitId = row.Cells[1].Value.ToString();
+                var unitId = row.Cells[1].Value?.ToString();
                 var alarms = await _alarmEngine.GetActiveAlarmsAsync();
                 var alarm = alarms.FirstOrDefault(a =>
                     a.UnitId == unitId &&
@@ -527,7 +548,9 @@ public partial class MainForm : Form
                 if (alarm != null)
                 {
                     await _alarmEngine.AcknowledgeAlarmAsync(alarm.Id, "Admin");
+                    selectedAlarms.Add(alarm);
                     await _operationLog.LogOperationAsync("Admin", "AlarmAck", $"确认告警: {alarm.Message}");
+                    AppendLog($"[确认告警] {alarm.UnitId}: {alarm.Message}");
                 }
             }
         }
@@ -536,7 +559,7 @@ public partial class MainForm : Form
         _alarmGrid.Rows.Clear();
         foreach (var alarm in activeAlarms)
         {
-            _alarmGrid.Rows.Add(
+            var rowIndex = _alarmGrid.Rows.Add(
                 alarm.Timestamp.ToString("yyyy-MM-dd HH:mm:ss"),
                 alarm.UnitId,
                 alarm.Level.ToString(),
@@ -544,6 +567,28 @@ public partial class MainForm : Form
                 alarm.Message,
                 alarm.CurrentValue.ToString("F1"),
                 alarm.Acknowledged);
+
+            if (alarm.Level == AlarmLevel.Emergency)
+                _alarmGrid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.FromArgb(255, 150, 150);
+            else if (alarm.Level == AlarmLevel.Critical)
+                _alarmGrid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.FromArgb(255, 220, 150);
+        }
+
+        var allAlarms = await _alarmEngine.GetAlarmHistoryAsync(DateTime.Now.AddDays(-7), DateTime.Now);
+        _alarmHistoryGrid.Rows.Clear();
+        foreach (var alarm in allAlarms.Take(100))
+        {
+            var rowIndex = _alarmHistoryGrid.Rows.Add(
+                alarm.Timestamp.ToString("yyyy-MM-dd HH:mm:ss"),
+                alarm.UnitId,
+                alarm.Level.ToString(),
+                alarm.Message,
+                alarm.AcknowledgedBy ?? "");
+
+            if (alarm.Level == AlarmLevel.Emergency)
+                _alarmHistoryGrid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.FromArgb(255, 200, 200);
+            else if (alarm.Level == AlarmLevel.Critical)
+                _alarmHistoryGrid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.FromArgb(255, 240, 200);
         }
     }
 
