@@ -791,19 +791,61 @@ public partial class MainForm : Form
 
     private async Task GenerateReport(DateTime startTime, DateTime endTime)
     {
-        var report = await _efficiencyAnalyzer.GenerateReportAsync(startTime, endTime);
+        var historicalData = new List<CoolingUnitData>();
+        var unitIds = new[] { "CU-001", "CU-002", "CU-003", "CU-004" };
+
+        foreach (var unitId in unitIds)
+        {
+            var unitData = await _timeSeriesDb.QueryDataAsync(unitId, startTime, endTime);
+            historicalData.AddRange(unitData);
+        }
+
+        var currentData = _latestData.Values.ToList();
+
+        EnergyEfficiencyReport report;
+
+        if (historicalData.Any() || currentData.Any())
+        {
+            report = await _efficiencyAnalyzer.GenerateReportFromCurrentDataAsync(currentData, historicalData);
+        }
+        else
+        {
+            report = await _efficiencyAnalyzer.GenerateReportAsync(startTime, endTime);
+        }
 
         _currentChartData.Clear();
-        var dataPoints = 20;
-        var timeSpan = endTime - startTime;
-        var step = TimeSpan.FromTicks(timeSpan.Ticks / (dataPoints - 1));
 
-        for (int i = 0; i < dataPoints; i++)
+        if (historicalData.Any())
         {
-            var time = startTime + step * i;
-            var pue = report.MinPUE + (report.MaxPUE - report.MinPUE) * Math.Sin(i * 0.3) * 0.5 + (report.AveragePUE - report.MinPUE) * 0.5;
-            pue = Math.Clamp(pue, report.MinPUE, report.MaxPUE);
-            _currentChartData.Add((time, Math.Round(pue, 3)));
+            var pueByTime = historicalData
+                .GroupBy(d => d.Timestamp.ToString("yyyy-MM-dd HH:mm"))
+                .Select(g => new
+                {
+                    Time = g.First().Timestamp,
+                    AvgPUE = g.Average(d => d.PUE)
+                })
+                .OrderBy(x => x.Time)
+                .ToList();
+
+            var maxPoints = 30;
+            var step = Math.Max(1, pueByTime.Count / maxPoints);
+
+            for (int i = 0; i < pueByTime.Count; i += step)
+            {
+                _currentChartData.Add((pueByTime[i].Time, Math.Round(pueByTime[i].AvgPUE, 3)));
+            }
+
+            if (_currentChartData.Count > 0 && _currentChartData.Last().Time != pueByTime.Last().Time)
+            {
+                _currentChartData.Add((pueByTime.Last().Time, Math.Round(pueByTime.Last().AvgPUE, 3)));
+            }
+        }
+        else if (currentData.Any())
+        {
+            foreach (var d in currentData)
+            {
+                _currentChartData.Add((d.Timestamp, Math.Round(d.PUE, 3)));
+            }
         }
 
         _currentUnitEfficiency = new Dictionary<string, UnitEfficiency>(report.UnitEfficiencies);
@@ -816,12 +858,13 @@ public partial class MainForm : Form
         if (_reportTextBox != null)
         {
             _reportTextBox.Clear();
-            _reportTextBox.AppendText($"╔{'═' * 50}╗\r\n");
+            _reportTextBox.AppendText($"╔{new string('═', 50)}╗\r\n");
             _reportTextBox.AppendText($"║{"能效分析报告",-48}║\r\n");
-            _reportTextBox.AppendText($"╚{'═' * 50}╝\r\n\r\n");
+            _reportTextBox.AppendText($"╚{new string('═', 50)}╝\r\n\r\n");
             _reportTextBox.AppendText($"报告时间:     {report.ReportTime:yyyy-MM-dd HH:mm:ss}\r\n");
             _reportTextBox.AppendText($"统计周期:     {startTime:yyyy-MM-dd HH:mm} 至 {endTime:yyyy-MM-dd HH:mm}\r\n");
-            _reportTextBox.AppendText($"统计时长:     {report.Duration.TotalHours:F1} 小时\r\n\r\n");
+            _reportTextBox.AppendText($"统计时长:     {report.Duration.TotalHours:F1} 小时\r\n");
+            _reportTextBox.AppendText($"数据点数:     {historicalData.Count + currentData.Count}\r\n\r\n");
             _reportTextBox.AppendText("┌" + new string('─', 50) + "┐\r\n");
             _reportTextBox.AppendText("│" + "核心指标".PadRight(48) + "│\r\n");
             _reportTextBox.AppendText("├" + new string('─', 50) + "┤\r\n");
@@ -862,7 +905,7 @@ public partial class MainForm : Form
         }
 
         await _operationLog.LogOperationAsync("Admin", "ReportGen", "生成能效分析报告");
-        AppendLog("[报告] 能效分析报告已生成");
+        AppendLog($"[报告] 能效分析报告已生成 (数据点: {historicalData.Count + currentData.Count})");
     }
 
     private async Task RefreshLogs(DataGridView logGrid)

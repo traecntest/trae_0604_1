@@ -58,6 +58,47 @@ public class EnergyEfficiencyAnalyzer : IEnergyEfficiencyAnalyzer
         return report;
     }
 
+    public async Task<EnergyEfficiencyReport> GenerateReportFromCurrentDataAsync(
+        IEnumerable<CoolingUnitData> currentData, IEnumerable<CoolingUnitData> historicalData)
+    {
+        var allCurrent = currentData.ToList();
+        var allHistorical = historicalData.ToList();
+        var allData = allHistorical.Concat(allCurrent).ToList();
+
+        var unitEfficiencies = new Dictionary<string, UnitEfficiency>();
+
+        foreach (var group in allData.GroupBy(d => d.UnitId))
+        {
+            var groupList = group.ToList();
+            unitEfficiencies[group.Key] = new UnitEfficiency
+            {
+                UnitId = group.Key,
+                AveragePUE = groupList.Average(d => d.PUE),
+                EnergyConsumption = groupList.Sum(d => d.CabinetPowerDensity * 0.01),
+                CoolingEnergy = groupList.Sum(d => (d.PumpSpeed * 0.01 + d.FanFrequency * 0.005))
+            };
+        }
+
+        var report = new EnergyEfficiencyReport
+        {
+            ReportTime = DateTime.Now,
+            Duration = allHistorical.Any()
+                ? allHistorical.Max(d => d.Timestamp) - allHistorical.Min(d => d.Timestamp)
+                : TimeSpan.FromMinutes(5),
+            AveragePUE = allData.Any() ? allData.Average(d => d.PUE) : 0,
+            MinPUE = allData.Any() ? allData.Min(d => d.PUE) : 0,
+            MaxPUE = allData.Any() ? allData.Max(d => d.PUE) : 0,
+            TotalEnergySaved = CalculateEnergySavings(allData),
+            CoolingEfficiency = await CalculateCoolingEfficiencyAsync(allData),
+            UnitEfficiencies = unitEfficiencies,
+            Recommendations = (await GetOptimizationRecommendationsAsync(allData)).ToList()
+        };
+
+        _logger.LogInformation("Report from current data: Avg PUE={AvgPUE:F3}, DataPoints={Count}",
+            report.AveragePUE, allData.Count);
+        return report;
+    }
+
     public Task<double> CalculatePUEAsync(IEnumerable<CoolingUnitData> data)
     {
         var dataList = data.ToList();
